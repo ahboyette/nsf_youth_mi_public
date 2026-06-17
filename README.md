@@ -1,2 +1,4 @@
 # nsf_youth_mi_public
-Supplemental Materials for "Forager and farmer adolescents are more market-oriented than adults across three Congolese villages: Age-structured social learning in the emergence of cultural diversity"
+Supplemental Materials for "Forager and farmer adolescents have more market-oriented preferences than adults across three Congo Basin villages"
+
+
