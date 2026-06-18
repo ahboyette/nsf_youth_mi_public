@@ -158,7 +158,7 @@ writeLines(pref_stan_code, tmp_stan_path_pref)
   #### Run Market Preferences Stan model ####
   
 # load data
-p <- read_csv("https://raw.githubusercontent.com/ahboyette/nsf_youth_mi_public/main/sm_pref_data.csv")
+p <- read_csv("https://raw.githubusercontent.com/ahboyette/nsf_youth_mi_public/main/data/sm_pref_data.csv")
 
 # remove all rows with missing values for item before pivoting
 nrow(p) # 3900
@@ -275,7 +275,7 @@ draws_pref <- fit_pref$draws(inc_warmup = FALSE)
 theta_draws <- draws %>%
   spread_draws(theta[person])
 
-theta_pref <- theta_draws
+theta_pref <- theta_draws # used in latent trait correlation analysis
 
 stopifnot(all(c(".draw", "person", "theta") %in% names(theta_draws)))
 
@@ -648,7 +648,7 @@ writeLines(share_stan_code, tmp_stan_path_share)
 
   #### Run Sharing Breadth Stan model ####
 # load data
-s <- read_csv("https://raw.githubusercontent.com/ahboyette/nsf_youth_mi_public/main/sm_share_data.csv")
+s <- read_csv("https://raw.githubusercontent.com/ahboyette/nsf_youth_mi_public/main/data/sm_share_data.csv")
 
 
 # remove all rows with missing values for item before pivoting
@@ -763,7 +763,7 @@ draws_shar <- fit_share$draws(inc_warmup = FALSE)
 theta_draws <- draws %>%
   spread_draws(theta[person])
 
-theta_shar <- theta_draws
+theta_shar <- theta_draws   # used in latent trait correlation analysis
 
 stopifnot(all(c(".draw", "person", "theta") %in% names(theta_draws)))
 
@@ -1006,3 +1006,160 @@ item_share_a <- ggplot(a_summary,
         axis.text = element_text(size = 14),
         strip.text = element_text(size = 14))
 item_share_a
+
+
+
+
+# LATENT TRAIT CORRELATION ANALYSIS ####
+
+# after running both models and extracting theta posteriors, check these:
+names(theta_pref)
+names(theta_shar)
+
+
+# rename thetas within draw object
+theta_pref <- theta_pref %>%
+  rename(theta_pref = theta)
+
+theta_shar <- theta_shar %>%
+  rename(theta_shar = theta)
+
+
+# join posterior draws from both models
+theta_joined <- theta_pref %>%
+  inner_join(
+    theta_shar,
+    by = c(".draw", "person")
+  )
+
+
+# standardize within draw
+theta_joined <- theta_joined %>%
+  group_by(.draw) %>%
+  mutate(
+    theta_pref_z = (theta_pref - mean(theta_pref)) / sd(theta_pref),
+    theta_shar_z = (theta_shar - mean(theta_shar)) / sd(theta_shar)
+  ) %>%
+  ungroup()
+
+
+# check that sign is positive
+theta_joined %>%
+  group_by(person) %>%
+  summarize(
+    t1 = mean(theta_pref_z),
+    t2 = mean(theta_shar_z)
+  ) %>%
+  summarize(cor = cor(t1, t2))
+
+
+# compute posterior correlations
+rho_draws <- theta_joined %>%
+  group_by(.draw) %>%
+  summarize(
+    rho = cor(theta_pref_z, theta_shar_z)
+  )
+
+# rho_draws$rho is the posterior distribution for the latent correlation
+
+
+# summarize posterior
+rho_draws %>%
+  summarize(
+    mean = mean(rho),
+    median = median(rho),
+    lower = quantile(rho, .025),
+    upper = quantile(rho, .975),
+    p_positive = mean(rho > 0)
+  )
+
+# plot
+library(ggplot2)
+
+ggplot(rho_draws, aes(x = rho)) +
+  geom_density() +
+  geom_vline(xintercept = 0, linetype = 2)
+
+
+
+# examine person-level covariance by examining correlation between residual person variation
+
+# extract z_person draws
+z_person_pref <- draws_pref %>%
+  spread_draws(z_person[person])
+
+sigma_person_pref <- draws_pref %>%
+  spread_draws(sigma_person)
+
+
+z_person_shar <- draws_shar %>%
+  spread_draws(z_person[person])
+
+sigma_person_shar <- draws_shar %>%
+  spread_draws(sigma_person)
+
+
+# combine sigma with z_person
+
+person_pref <- z_person_pref %>%
+  inner_join(
+    sigma_person_pref,
+    by = ".draw"
+  ) %>%
+  mutate(
+    u_pref = z_person * sigma_person
+  )
+
+person_shar <- z_person_shar %>%
+  inner_join(
+    sigma_person_shar,
+    by = ".draw"
+  ) %>%
+  mutate(
+    u_shar = z_person * sigma_person
+  )
+
+
+# join models
+u_joined <- person_pref %>%
+  select(.draw, person, u_pref) %>%
+  inner_join(
+    person_shar %>%
+      select(.draw, person, u_shar),
+    by = c(".draw", "person")
+  )
+
+
+# standardize within draw
+u_joined <- u_joined %>%
+  group_by(.draw) %>%
+  mutate(
+    u_pref_z = (u_pref - mean(u_pref)) / sd(u_pref),
+    u_shar_z = (u_shar - mean(u_shar)) / sd(u_shar)
+  ) %>%
+  ungroup()
+
+
+# posterior residual correlations
+rho_u <- u_joined %>%
+  group_by(.draw) %>%
+  summarize(
+    rho = cor(u_pref_z, u_shar_z)
+  )
+
+
+rho_u %>%
+  summarize(
+    mean = mean(rho),
+    median = median(rho),
+    lower = quantile(rho, .025),
+    upper = quantile(rho, .975),
+    p_positive = mean(rho > 0)
+  )
+
+# plot
+library(ggplot2)
+
+ggplot(rho_u, aes(x = rho)) +
+  geom_density() +
+  geom_vline(xintercept = 0, linetype = 2)
